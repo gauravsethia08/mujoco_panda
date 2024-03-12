@@ -1,7 +1,8 @@
 import os
 import time
 import threading
-import mujoco_py
+# import mujoco_py
+import mujoco as mj
 import quaternion
 import numpy as np
 from mujoco_panda import PandaArm
@@ -83,11 +84,11 @@ if __name__ == "__main__":
     p.step()
     time.sleep(0.01)
 
-    new_pose = p._sim.data.qpos.copy()[:7]
+    new_pose = p._data.qpos.copy()[:7]
 
     curr_ee, original_ori = p.ee_pose()
 
-    target_z_traj = np.linspace(curr_ee[2], curr_ee[2]+0.1, 25).tolist()
+    target_z_traj = np.linspace(curr_ee[2], curr_ee[2]+0.3, 25).tolist()
     z_target = curr_ee[2]
 
     target_pos = curr_ee
@@ -106,8 +107,8 @@ if __name__ == "__main__":
         if elapsed_r >= 0.1:
             i += 1
             now_r = time.time()
-        render_frame(p.viewer, robot_pos, robot_ori)
-        render_frame(p.viewer, target_pos, original_ori, alpha=0.2)
+        # render_frame(p.viewer, robot_pos, robot_ori)
+        # render_frame(p.viewer, target_pos, original_ori, alpha=0.2)
 
         p.render()
 
@@ -115,8 +116,8 @@ if __name__ == "__main__":
 
     while True:
         robot_pos, robot_ori = p.ee_pose()
-        render_frame(p.viewer, robot_pos, robot_ori)
-        render_frame(p.viewer, target_pos, original_ori, alpha=0.2)
+        # render_frame(p.viewer, robot_pos, robot_ori)
+        # render_frame(p.viewer, target_pos, original_ori, alpha=0.2)
         p.render()
 
     run_controller = False

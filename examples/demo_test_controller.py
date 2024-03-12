@@ -1,6 +1,7 @@
 import os
 import time
-import mujoco_py
+# import mujoco_py
+import mujoco as mj
 import numpy as np
 from mujoco_panda import PandaArm
 from mujoco_panda.utils.viewer_utils import render_frame
@@ -49,7 +50,7 @@ if __name__ == "__main__":
     p = PandaArm(model_path=MODEL_PATH+'panda_block_table.xml',
                  render=True, compensate_gravity=False, smooth_ft_sensor=True)
 
-    if mujoco_py.functions.mj_isPyramidal(p.model):
+    if mj._functions.mj_isPyramidal(p.model):
         print("Type of friction cone is pyramidal")
     else:
         print("Type of friction cone is eliptical")
@@ -89,14 +90,15 @@ if __name__ == "__main__":
     i = 0
     count = 0
     while i < target_traj.shape[0]:
+        print(i)
         # get current robot end-effector pose
         robot_pos, robot_ori = p.ee_pose() 
 
         elapsed_r = time.time() - now_r
 
         # render controller target and current ee pose using frames
-        render_frame(p.viewer, robot_pos, robot_ori)
-        render_frame(p.viewer, target_traj[i, :], target_ori, alpha=0.2)
+        # render_frame(p.viewer, robot_pos, robot_ori)
+        # render_frame(p.viewer, target_traj[i, :], target_ori, alpha=0.2)
 
         if i == 130: # activate force control when the robot is near the table
             ctrl.change_ft_dir([0,0,1,0,0,0]) # start force control along Z axis

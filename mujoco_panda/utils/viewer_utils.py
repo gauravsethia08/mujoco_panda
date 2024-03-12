@@ -1,4 +1,4 @@
-from mujoco_py.generated import const
+# from mujoco_py.generated import const
 from .tf import quat2Mat
 
 def render_frame(viewer, pos, quat, scale = 0.1, alpha = 1.):

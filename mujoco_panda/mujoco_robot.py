@@ -4,7 +4,9 @@ import logging
 import threading
 import quaternion
 import numpy as np
-import mujoco_py as mjp
+import mujoco as mj
+from mujoco import viewer
+# import mujoco_py as mjp
 from threading import Lock
 
 LOG_LEVEL = "DEBUG"
@@ -47,13 +49,15 @@ class MujocoRobot(object):
             self.__class__.__name__), level=LOG_LEVEL)
         self._logger = logging.getLogger(__name__)
 
-        if isinstance(from_model,mjp.cymj.PyMjModel):
+        if isinstance(from_model, mj._structs.MjModel):
             self._model = from_model
         else:
-            self._model = mjp.load_model_from_path(model_path)
+            self._model = mj.MjModel.from_xml_path(model_path)
 
-        self._sim = mjp.MjSim(self._model)
-        self._viewer = mjp.MjViewer(self._sim) if render else None
+        self._data = mj.MjData(self._model)
+        # TODO
+        # self._viewer = mjp.MjViewer(self._sim) if render else None
+        self._viewer = viewer.launch_passive(self._model, self._data) if render else None
 
         self._has_gripper = False  # by default, assume no gripper is attached
 
@@ -65,11 +69,12 @@ class MujocoRobot(object):
         self._nq = len(self.qpos_joints)  # total number of joints
 
         self._all_joint_names = [
-            self.model.joint_id2name(j) for j in self.qpos_joints]
+            self.model.joint(j).name for j in self.qpos_joints]
 
         self._all_joint_dict = dict(
             zip(self._all_joint_names, self.qpos_joints))
 
+        print(config)
         if 'ee_name' in config:
             self.set_as_ee(config['ee_name'])
         else:
@@ -101,17 +106,17 @@ class MujocoRobot(object):
         """
         self._ee_name = body_name
 
-        if body_name in self._model.site_names:
+        if body_name in [self._model.site(i).name for i in range(self._model.nsite)]:
             self._ee_is_a_site = True
-            self._ee_idx = self._model.site_name2id(body_name)
+            self._ee_idx = self._model.site(body_name).id
             self._logger.debug(
                 "End-effector is a site in model: {}".format(body_name))
         else:
             self._ee_is_a_site = False
-            self._ee_idx = self._model.body_name2id(self._ee_name)
+            self._ee_idx = self._model.body(self._ee_name).id
 
     def _use_last_defined_link(self):
-        return self._model.nbody-1, self._model.body_id2name(self._model.nbody-1)
+        return self._model.nbody-1, self._model.body(self._model.nbody-1).name
 
     def add_pre_step_callable(self, f_dict):
         """
@@ -136,14 +141,14 @@ class MujocoRobot(object):
                 self._post_step_callables.update(f_dict)
 
     @property
-    def sim(self):
+    def data(self):
         """
-        Get mujoco_py.sim object associated with this instance
+        Get mujoco data object associated with this instance
 
-        :return: mujoco_py.sim object associated with this instance
-        :rtype: mujoco_py.MjSim
+        :return: mujoco.MjData object associated with this instance
+        :rtype: mujoco._structs.MjData
         """
-        return self._sim
+        return self._data
 
     @property
     def viewer(self):
@@ -156,8 +161,8 @@ class MujocoRobot(object):
     @property
     def model(self):
         """
-        :return: mujoco_py.cymj.PyMjModel object associated with this instance
-        :rtype: mujoco_py.cymj.PyMjModel
+        :return: mujoco.MjModel object associated with this instance
+        :rtype: mujoco._structs.MjModel
         """
         return self._model
 
@@ -173,7 +178,7 @@ class MujocoRobot(object):
         if isinstance(bodies, str):
             bodies = [bodies]
         for body in bodies:
-            if not body in self._model.body_names:
+            if not body in [self._model.body(i).name for i in range(self._model.nbody)]:
                 return False
         return True
 
@@ -187,23 +192,31 @@ class MujocoRobot(object):
         if self._model.sensor_type[0] == 4 and self._model.sensor_type[1] == 5:
             if not self._forwarded:
                 self.forward_sim()
-            sensordata = -self._sim.data.sensordata.copy() # change sign to make force relative to parent body
+
+            sensordata = -self._data.sensordata.copy() # change sign to make force relative to parent body
+
             if in_global_frame:
                 if self._ft_site_name:
                     new_sensordata = np.zeros(6)
                     _, site_ori = self.site_pose(
-                        self._model.site_name2id(self._ft_site_name))
+                        self._model.site(self._ft_site_name).id)
+                    
                     rotation_mat = quaternion.as_rotation_matrix(
                         np.quaternion(*site_ori))
+                    
                     new_sensordata[:3] = np.dot(
                         rotation_mat, np.asarray(sensordata[:3]))
+                    
                     new_sensordata[3:] = np.dot(
                         rotation_mat, np.asarray(sensordata[3:]))
+                    
                     sensordata = new_sensordata.copy()
                 else:
                     self._logger.warning("Could not transform ft sensor values. Please\
                         provide ft site name in config file.")
+                    
             return sensordata[:3], sensordata[3:]
+        
         else:
             self._logger.debug(
                 "Could not find FT sensor as the first sensor in model!")
@@ -218,19 +231,17 @@ class MujocoRobot(object):
         :rtype: [ContactInfo]
         """
         self._mutex.acquire()
-        mjp.functions.mj_rnePostConstraint(
-            self._sim.model, self._sim.data)
+        mj._functions.mj_rnePostConstraint(self._model, self._data)
 
-        nc = self._sim.data.ncon
+        nc = self._data.ncon
 
         c_array = np.zeros(6, dtype=np.float64)
         contact_list = []
         
         for i in range(nc):
-            contact = self._sim.data.contact[i]
+            contact = self._data.contact[i]
             c_array.fill(0)
-            mjp.functions.mj_contactForce(
-                self._sim.model, self._sim.data, i, c_array)
+            mj._functions.mj_contactForce(self._model, self._data, i, c_array)
 
             ori = np.flip(contact.frame.reshape(3, 3).T, 1)
 
@@ -274,8 +285,14 @@ class MujocoRobot(object):
         if recompute and not self._forwarded:
             self.forward_sim()
 
-        jacp = self._sim.data.body_jacp[body_id, :].reshape(3, -1)
-        jacr = self._sim.data.body_jacr[body_id, :].reshape(3, -1)
+        jacp = np.zeros((3, len(self.controllable_joints)))
+        jacr = np.zeros((3, len(self.controllable_joints)))
+
+        # Body for which we want jacobian
+        mj.mj_jacBody(self._model, self._data, jacp, jacr, body_id)
+
+        jacp = jacp.reshape(3, -1)
+        jacr = jacr.reshape(3, -1)
 
         return np.vstack([jacp[:, joint_indices], jacr[:, joint_indices]])
 
@@ -300,8 +317,15 @@ class MujocoRobot(object):
         if recompute and not self._forwarded:
             self.forward_sim()
 
-        jacp = self._sim.data.site_jacp[site_id, :].reshape(3, -1)
-        jacr = self._sim.data.site_jacr[site_id, :].reshape(3, -1)
+        jacp = np.zeros((3, len(self.controllable_joints)))
+        jacr = np.zeros((3, len(self.controllable_joints)))
+
+        # Body for which we want jacobian
+        mj.mj_jacSite(self._model, self._data, jacp, jacr, site_id)
+
+        jacp = jacp.reshape(3, -1)
+        jacr = jacr.reshape(3, -1)
+
         return np.vstack([jacp[:, joint_indices], jacr[:, joint_indices]])
 
     def ee_pose(self):
@@ -313,6 +337,7 @@ class MujocoRobot(object):
         """
         if self._ee_is_a_site:
             return self.site_pose(self._ee_idx)
+        
         return self.body_pose(self._ee_idx)
 
     def body_pose(self, body_id, recompute=True):
@@ -328,10 +353,12 @@ class MujocoRobot(object):
         :rtype: np.ndarray, np.ndarray
         """
         if isinstance(body_id, str):
-            body_id = self._model.body_name2id(body_id)
+            body_id = self._model.body(body_id).id
+
         if recompute and not self._forwarded:
             self.forward_sim()
-        return self._sim.data.body_xpos[body_id].copy(), self._sim.data.body_xquat[body_id].copy()
+        
+        return self._data.body(body_id).xpos.copy(), self._data.body(body_id).xquat.copy()
 
     def site_pose(self, site_id, recompute=True):
         """
@@ -346,10 +373,16 @@ class MujocoRobot(object):
         :rtype: np.ndarray, np.ndarray
         """
         if isinstance(site_id, str):
-            site_id = self._model.site_name2id(site_id)
+            site_id = self._model.site(site_id).id
+
         if recompute and not self._forwarded:
             self.forward_sim()
-        return self._sim.data.site_xpos[site_id].copy(), quaternion.as_float_array(quaternion.from_rotation_matrix(self._sim.data.site_xmat[site_id].copy().reshape(3, 3)))
+
+        # vel2 = np.zeros(6)
+        # mj.mj_objectVelocity(self._model, self._data, mj.mjtObj.mjOBJ_SITE, site_id, vel2, True)
+        # print(vel2)
+        return self._data.site(site_id).xpos.copy(), quaternion.as_float_array(quaternion.from_rotation_matrix(self._data.site(site_id).xmat.copy().reshape(3, 3)))
+        # return vel2[3:], vel2[:3]
 
     def ee_velocity(self):
         """
@@ -360,6 +393,7 @@ class MujocoRobot(object):
         """
         if self._ee_is_a_site:
             return self.site_velocity(self._ee_idx)
+        
         return self.body_velocity(self._ee_idx)
 
     def body_velocity(self, body_id, recompute=True):
@@ -376,7 +410,9 @@ class MujocoRobot(object):
         """
         if recompute and not self._forwarded:
             self.forward_sim()
-        return self._sim.data.body_xvelp[body_id].copy(), self._sim.data.body_xvelr[body_id].copy()
+
+        # cvel is of the form (rot:lin)
+        return self._data.body(body_id).cvel[3:].copy(), self._data.body(body_id).cvel[:3].copy()
 
     def site_velocity(self, site_id, recompute=True):
         """
@@ -392,11 +428,17 @@ class MujocoRobot(object):
         """
         if recompute and not self._forwarded:
             self.forward_sim()
-        return self._sim.data.site_xvelp[site_id].copy(), self._sim.data.site_xvelr[site_id].copy()
+
+        vel2 = np.zeros(6)
+        mj.mj_objectVelocity(self._model, self._data, mj.mjtObj.mjOBJ_SITE, site_id, vel2, True)
+        # print(vel2)
+        # return self._data.site(site_id).xpos.copy(), quaternion.as_float_array(quaternion.from_rotation_matrix(self._data.site(site_id).xmat.copy().reshape(3, 3)))
+        return vel2[3:], vel2[:3]
 
     def _define_joint_ids(self):
         # transmission type (0 == joint)
         trntype = self._model.actuator_trntype
+
         # transmission id (get joint actuated)
         trnid = self._model.actuator_trnid
 
@@ -446,7 +488,8 @@ class MujocoRobot(object):
         """
         if joints is None:
             joints = self.qpos_joints
-        return self._sim.data.qpos[joints]
+
+        return self._data.qpos[joints]
 
     def joint_velocities(self, joints=None):
         """
@@ -459,7 +502,8 @@ class MujocoRobot(object):
         """
         if joints is None:
             joints = self.movable_joints
-        return self._sim.data.qvel[joints]
+
+        return self._data.qvel[joints]
 
     def joint_accelerations(self, joints=None):
         """
@@ -472,7 +516,8 @@ class MujocoRobot(object):
         """
         if joints is None:
             joints = self.movable_joints
-        return self._sim.data.qacc[joints]
+
+        return self._data.qacc[joints]
 
     def stop_asynchronous_run(self):
         """
@@ -495,7 +540,7 @@ class MujocoRobot(object):
 
         assert cmd.shape[0] == actuator_ids.shape[0]
 
-        self._sim.data.ctrl[actuator_ids] = cmd
+        self._data.ctrl[actuator_ids] = cmd
 
     def hard_set_joint_positions(self, values, indices=None):
         """
@@ -511,7 +556,7 @@ class MujocoRobot(object):
         if indices is None:
             indices = range(np.asarray(values).shape[0])
 
-        self._sim.data.qpos[indices] = values
+        self._data.qpos[indices] = values
 
     def __del__(self):
         if hasattr(self, '_asynch_sim_thread') and self._asynch_sim_thread.isAlive():
@@ -531,8 +576,8 @@ class MujocoRobot(object):
             self._pre_step_callables[f_id][0](
                 *self._pre_step_callables[f_id][1])
 
-
-        self._sim.step()
+        # self._sim.step()
+        mj.mj_step(self._model, self._data)
 
         # if self._first_step_not_done:
         #     self._first_step_not_done = False
@@ -552,7 +597,8 @@ class MujocoRobot(object):
         Perform no-motion forward simulation without integrating over time, i.e. sim step is 
         not increased.
         """
-        self._sim.forward()
+        # self._sim.forward()
+        mj.mj_forward(self._model, self._data)
         self._forwarded = True
 
     def render(self):
@@ -561,4 +607,5 @@ class MujocoRobot(object):
         asynchronous simulation.
         """
         if self._viewer is not None:
-            self._viewer.render()
+            # self._viewer.render()
+            self._viewer.sync()

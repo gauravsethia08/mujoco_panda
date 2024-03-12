@@ -1,4 +1,5 @@
-import mujoco_py as mjp
+# import mujoco_py as mjp
+import mujoco as mj
 
 class GravityRobot(object):
     """
@@ -6,13 +7,15 @@ class GravityRobot(object):
     """
 
     def __init__(self, model_path):
-        self.model = mjp.load_model_from_path(model_path)
-        self.sim = mjp.MjSim(self.model)
+        self.model = mj.MjModel.from_xml_path(model_path)
+        self.data = mj.MjData(self.model)
 
         self._controllable_joints = self.get_controllable_joints()
 
-        self._all_joints = [self.model.joint_name2id(
-            j) for j in self.model.joint_names]
+        # self._all_joints = [self.model.joint_name2id(
+        #     j) for j in self.model.joint_names]
+        self._all_joints = [
+            self.model.joint(j).id for j in self.model.jnt_qposadr]
 
     def get_controllable_joints(self):
         """

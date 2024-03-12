@@ -24,12 +24,12 @@ class ControllerBase(object):
         if 'control_rate' in self._config:
             control_rate = self._config['control_rate']
         else:
-            control_rate = 1./self._robot.model.opt.timestep
+            control_rate = 1./self._robot._model.opt.timestep
 
 
         self._is_active = False
 
-        self._cmd = self._robot.sim.data.ctrl[self._robot.actuated_arm_joints].copy(
+        self._cmd = self._robot._data.ctrl[self._robot.actuated_arm_joints].copy(
         )
 
         self._mutex = threading.Lock()

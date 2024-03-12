@@ -24,7 +24,7 @@ if __name__ == "__main__":
     p.start_asynchronous_run() # run simulation in separate independent thread
 
     _cth = ParallelPythonCmd(exec_func)
-
+    print("This done")
     while True:
         p.render()
 
